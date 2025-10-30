@@ -15,7 +15,7 @@ from openai import OpenAI
 # -------------------- GPIO CONFIG --------------------
 BuzzerPin = 11
 ButtonPin = 13
-VIBRATOR_PIN = 35
+VIBRATOR_PIN = 22
 
 def setup():
     GPIO.setmode(GPIO.BOARD)
