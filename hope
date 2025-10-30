@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+# Button toggles monitoring ON/OFF
+# Continuous buzzer if water + <70°F
+# 2-second buzzer pulse if <70°F only
+# Vibrator ON when water is detected
+
+import RPi.GPIO as GPIO
+import time
+import os
+import glob
+import subprocess
+import base64
+from openai import OpenAI
+
+# -------------------- GPIO CONFIG --------------------
+BuzzerPin = 11
+ButtonPin = 13
+VIBRATOR_PIN = 35
+
+def setup():
+    GPIO.setmode(GPIO.BOARD)
+
+    # Buzzer setup
+    GPIO.setup(BuzzerPin, GPIO.OUT)
+    GPIO.output(BuzzerPin, GPIO.HIGH)
+
+    # Button setup
+    GPIO.setup(ButtonPin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    # Vibrator setup
+    GPIO.setup(VIBRATOR_PIN, GPIO.OUT)
+    GPIO.output(VIBRATOR_PIN, GPIO.HIGH)
+
+def buzzer_on():
+    GPIO.output(BuzzerPin, GPIO.LOW)
+
+def buzzer_off():
+    GPIO.output(BuzzerPin, GPIO.HIGH)
+
+def vibrator_on():
+    GPIO.output(VIBRATOR_PIN, GPIO.LOW)
+
+def vibrator_off():
+    GPIO.output(VIBRATOR_PIN, GPIO.HIGH)
+
+def cleanup():
+    GPIO.cleanup()
+
+# -------------------- TEMP SENSOR --------------------
+os.system('modprobe w1-gpio')
+os.system('modprobe w1-therm')
+
+base_dir = '/sys/bus/w1/devices/'
+device_folder = glob.glob(base_dir + '28*')[0]
+device_file = device_folder + '/w1_slave'
+
+def read_temp_raw():
+    with open(device_file, 'r') as f:
+        return f.readlines()
+
+def read_temp():
+    lines = read_temp_raw()
+    while lines[0].strip()[-3:] != 'YES':
+        time.sleep(0.2)
+        lines = read_temp_raw()
+    equals_pos = lines[1].find('t=')
+    if equals_pos != -1:
+        temp_string = lines[1][equals_pos + 2:]
+        temp_c = float(temp_string) / 1000.0
+        temp_f = temp_c * 9.0 / 5.0 + 32.0
+        return temp_c, temp_f
+
+# -------------------- CAMERA + OPENAI --------------------
+client = OpenAI(api_key="sk-REPLACE_WITH_NEW_KEY")
+
+MODEL = "gpt-5-nano-2025-08-07"
+IMAGE_PATH = "captured_image.jpg"
+RESOLUTION = "640x480"
+
+def capture_image(path: str):
+    subprocess.run(["fswebcam", "-r", RESOLUTION, "-S", "2", "--no-banner", path], check=True)
+
+def to_data_url(path: str) -> str:
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:image/jpeg;base64,{b64}"
+
+def extract_text(resp):
+    text = getattr(resp, "output_text", None)
+    if text:
+        return text.strip()
+    try:
+        for item in getattr(resp, "output", []):
+            for part in getattr(item, "content", []):
+                if getattr(part, "type", None) in ("output_text", "text") and getattr(part, "text", None):
+                    return part.text.strip()
+    except Exception:
+        pass
+    return ""
+
+def analyze_for_water():
+    data_url = to_data_url(IMAGE_PATH)
+    prompt = (
+        "Analyze the image carefully. Respond with ONLY 'YES' if there is visible water "
+        "(river, puddle, pool, bottle, etc). Otherwise respond 'NO'."
+    )
+    resp = client.responses.create(
+        model=MODEL,
+        reasoning={"effort": "low"},
+        max_output_tokens=24,
+        input=[{
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": prompt},
+                {"type": "input_image", "image_url": data_url}
+            ]
+        }],
+    )
+    result = extract_text(resp)
+    print(f"Model response: {result}")
+    return result.upper().startswith("Y")
+
+# -------------------- MAIN LOOP --------------------
+def main():
+    print("System started. Press button to toggle ON/OFF.")
+    monitoring = True
+    last_button_state = GPIO.input(ButtonPin)
+    debounce_time = 0.2
+    last_camera_time = 0
+    camera_interval = 5  # seconds
+
+    has_water = False  # track latest water state
+
+    while True:
+        current_button_state = GPIO.input(ButtonPin)
+
+        # Button toggles monitoring ON/OFF
+        if last_button_state == GPIO.HIGH and current_button_state == GPIO.LOW:
+            monitoring = not monitoring
+            if monitoring:
+                print("\nMonitoring RESUMED.")
+            else:
+                print("\nMonitoring PAUSED.")
+                buzzer_off()
+                vibrator_off()
+            time.sleep(debounce_time)
+        last_button_state = current_button_state
+
+        if monitoring:
+            # --- Temperature Reading ---
+            try:
+                temp_c, temp_f = read_temp()
+                print(f"Temperature: {temp_f:.2f} °F", end="\r")
+            except Exception as e:
+                print(f"\nTemp read error: {e}")
+                temp_f = 72  # default if sensor fails
+
+            # --- Camera Analysis every 5s ---
+            if time.time() - last_camera_time >= camera_interval:
+                try:
+                    capture_image(IMAGE_PATH)
+                    print("\nImage captured — analyzing...")
+                    has_water = analyze_for_water()
+
+                    if has_water:
+                        print("Water detected — vibrator ON.")
+                        vibrator_on()
+                    else:
+                        print("No water detected — vibrator OFF.")
+                        vibrator_off()
+                except Exception as e:
+                    print(f"Camera/AI error: {e}")
+                    vibrator_off()
+                    has_water = False
+                last_camera_time = time.time()
+
+            # --- Buzzer Logic ---
+            if has_water and temp_f < 70:
+                print("Water + Low Temp — Continuous Buzzing")
+                buzzer_on()
+            elif not has_water and temp_f < 70:
+                print("Low Temp Only — 2s Buzz")
+                buzzer_on()
+                time.sleep(2)
+                buzzer_off()
+            else:
+                buzzer_off()
+
+        else:
+            buzzer_off()
+            vibrator_off()
+
+        time.sleep(2)
+
+# -------------------- ENTRY POINT --------------------
+if __name__ == "__main__":
+    setup()
+    try:
+        print("Vibrator initialized.")
+        main()
+    except KeyboardInterrupt:
+        print("\nProgram interrupted. Cleaning up...")
+        cleanup()
+    except Exception as e:
+        print(f"Error: {e}")
+        cleanup()
+
+
