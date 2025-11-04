@@ -46,17 +46,6 @@ def vibrator_off():
 def cleanup():
     GPIO.cleanup()
 
-def toggle_monitoring(channel):
-    global monitoring
-    monitoring = not monitoring
-    if monitoring:
-        print("\nMonitoring RESUMED.")
-    else:
-        print("\nMonitoring PAUSED.")
-        buzzer_off()
-        vibrator_off()
-
-
 # -------------------- TEMP SENSOR --------------------
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
@@ -139,20 +128,36 @@ def main():
     debounce_time = 0.2
     last_camera_time = 0
     camera_interval = 5  # seconds
+    has_water = False
 
-    has_water = False  # track latest water state
+    # Non-blocking buzzer timer
+    buzzer_end_time = 0
 
     while True:
+        current_button_state = GPIO.input(ButtonPin)
+
+        # ---------------- BUTTON (always responsive) ----------------
+        if last_button_state == GPIO.HIGH and current_button_state == GPIO.LOW:
+            monitoring = not monitoring
+            if monitoring:
+                print("\nMonitoring RESUMED.")
+            else:
+                print("\nMonitoring PAUSED.")
+                buzzer_off()
+                vibrator_off()
+            time.sleep(debounce_time)
+        last_button_state = current_button_state
+
         if monitoring:
-            # --- Temperature Reading ---
+
+            # ---- TEMP ----
             try:
                 temp_c, temp_f = read_temp()
                 print(f"Temperature: {temp_f:.2f} °F", end="\r")
-            except Exception as e:
-                print(f"\nTemp read error: {e}")
-                temp_f = 72  # default if sensor fails
+            except:
+                temp_f = 72
 
-            # --- Camera Analysis every 5s ---
+            # ---- CAMERA EVERY 5 SECONDS ----
             if time.time() - last_camera_time >= camera_interval:
                 try:
                     capture_image(IMAGE_PATH)
@@ -160,34 +165,35 @@ def main():
                     has_water = analyze_for_water()
 
                     if has_water:
-                        print("Water detected — vibrator ON.")
                         vibrator_on()
                     else:
-                        print("No water detected — vibrator OFF.")
                         vibrator_off()
-                except Exception as e:
-                    print(f"Camera/AI error: {e}")
+                except:
                     vibrator_off()
                     has_water = False
                 last_camera_time = time.time()
 
-            # --- Buzzer Logic ---
-            if has_water and temp_f < 80:
-                print("Water + Low Temp — Continuous Buzzing")
+            # ---- BUZZER LOGIC (NO BLOCKING) ----
+            if has_water and temp_f < 70:
                 buzzer_on()
-            elif not has_water and temp_f < 80:
-                print("Low Temp Only — 2s Buzz")
-                buzzer_on()
-                time.sleep(2)
-                buzzer_off()
+
+            elif not has_water and temp_f < 70:
+                if buzzer_end_time < time.time():  # start a new 2s beep
+                    buzzer_on()
+                    buzzer_end_time = time.time() + 2
             else:
+                buzzer_off()
+
+            # Turn buzzer off when pulse timer ends
+            if time.time() > buzzer_end_time and not (has_water and temp_f < 70):
                 buzzer_off()
 
         else:
             buzzer_off()
             vibrator_off()
 
-        time.sleep(2)
+        # *** FAST LOOP FOR RESPONSIVE BUTTON ***
+        time.sleep(0.05)
 
 # -------------------- ENTRY POINT --------------------
 if __name__ == "__main__":
