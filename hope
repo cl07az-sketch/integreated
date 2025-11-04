@@ -17,8 +17,6 @@ BuzzerPin = 11
 ButtonPin = 13
 VIBRATOR_PIN = 22
 
-monitoring = True  # GLOBAL so the interrupt callback can modify it
-
 def setup():
     GPIO.setmode(GPIO.BOARD)
 
@@ -26,9 +24,8 @@ def setup():
     GPIO.setup(BuzzerPin, GPIO.OUT)
     GPIO.output(BuzzerPin, GPIO.HIGH)
 
-    # Button setup (interrupt-based)
+    # Button setup
     GPIO.setup(ButtonPin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    GPIO.add_event_detect(ButtonPin, GPIO.FALLING, callback=toggle_monitoring, bouncetime=300)
 
     # Vibrator setup
     GPIO.setup(VIBRATOR_PIN, GPIO.OUT)
@@ -40,12 +37,14 @@ def buzzer_on():
 def buzzer_off():
     GPIO.output(BuzzerPin, GPIO.HIGH)
 
-# IMPORTANT: Vibrator stays same — HIGH = ON, LOW = OFF
 def vibrator_on():
     GPIO.output(VIBRATOR_PIN, GPIO.HIGH)
 
 def vibrator_off():
     GPIO.output(VIBRATOR_PIN, GPIO.LOW)
+
+def cleanup():
+    GPIO.cleanup()
 
 def toggle_monitoring(channel):
     global monitoring
@@ -57,8 +56,6 @@ def toggle_monitoring(channel):
         buzzer_off()
         vibrator_off()
 
-def cleanup():
-    GPIO.cleanup()
 
 # -------------------- TEMP SENSOR --------------------
 os.system('modprobe w1-gpio')
@@ -136,11 +133,14 @@ def analyze_for_water():
 
 # -------------------- MAIN LOOP --------------------
 def main():
-    print("System started. Button toggles monitoring at ANY TIME.")
-
+    print("System started. Press button to toggle ON/OFF.")
+    monitoring = True
+    last_button_state = GPIO.input(ButtonPin)
+    debounce_time = 0.2
     last_camera_time = 0
     camera_interval = 5  # seconds
-    has_water = False
+
+    has_water = False  # track latest water state
 
     while True:
         if monitoring:
@@ -148,8 +148,9 @@ def main():
             try:
                 temp_c, temp_f = read_temp()
                 print(f"Temperature: {temp_f:.2f} °F", end="\r")
-            except Exception:
-                temp_f = 72
+            except Exception as e:
+                print(f"\nTemp read error: {e}")
+                temp_f = 72  # default if sensor fails
 
             # --- Camera Analysis every 5s ---
             if time.time() - last_camera_time >= camera_interval:
@@ -171,21 +172,22 @@ def main():
                 last_camera_time = time.time()
 
             # --- Buzzer Logic ---
-            if has_water and temp_f < 70:
+            if has_water and temp_f < 80:
                 print("Water + Low Temp — Continuous Buzzing")
                 buzzer_on()
-            elif not has_water and temp_f < 70:
+            elif not has_water and temp_f < 80:
                 print("Low Temp Only — 2s Buzz")
                 buzzer_on()
                 time.sleep(2)
                 buzzer_off()
             else:
                 buzzer_off()
+
         else:
             buzzer_off()
             vibrator_off()
 
-        time.sleep(0.2)  # Faster loop so button is always responsive
+        time.sleep(2)
 
 # -------------------- ENTRY POINT --------------------
 if __name__ == "__main__":
