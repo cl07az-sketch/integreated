@@ -183,6 +183,13 @@ def main():
                         buzzer_on()
                     else:
                         buzzer_off()
+
+                        # Restart the pulse timer if it's finished
+                        if buzzer_end_time != 0 and time.time() >= buzzer_end_time:
+                            buzzer_end_time = time.time() + 2  # start new 2-second ON period
+                        elif buzzer_end_time == 0:
+                            buzzer_end_time = time.time() + 2  # first-time trigger
+
             else:
                 buzzer_off()
                 buzzer_end_time = 0
