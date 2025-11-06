@@ -171,25 +171,28 @@ def main():
                     has_water = False
                 last_camera_time = time.time()
 
-            # ---- BUZZER LOGIC (NON-BLOCKING) ----
-            if has_water and temp_f < 80:
-                buzzer_on()
-
-            elif not has_water and temp_f < 80:
-                if time.time() > buzzer_end_time:
+            # ---- BUZZER LOGIC (CORRECTED) ----
+            if temp_f < 75:
+                if has_water:
                     buzzer_on()
-                    buzzer_end_time = time.time() + 2
+                    buzzer_end_time = 0
+                else:
+                    if buzzer_end_time == 0:
+                        buzzer_end_time = time.time() + 2
+                    if time.time() < buzzer_end_time:
+                        buzzer_on()
+                    else:
+                        buzzer_off()
             else:
                 buzzer_off()
-
-            if time.time() > buzzer_end_time and not (has_water and temp_f < 80):
-                buzzer_off()
+                buzzer_end_time = 0
 
         else:
+            # Monitoring PAUSED → everything OFF immediately
             buzzer_off()
             vibrator_off()
 
-        time.sleep(0.05)  # fast loop keeps button + Ctrl+C responsive
+        time.sleep(0.05)
 
 # -------------------- ENTRY POINT --------------------
 if __name__ == "__main__":
