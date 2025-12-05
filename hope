@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-# Button toggles monitoring ON/OFF (interrupt-based, always works)
-# Continuous buzzer if water + <80°F
-# Repeating 2-second buzzer pulses if only <80°F
+# Button toggles monitoring ON/OFF 
+# Continuous buzzer if water + <76°F
+# Repeating 2-second buzzer pulses if only <76°F
 # Vibrator ON when water is detected
-# Camera prints description of scene every capture
 
 import RPi.GPIO as GPIO
 import time
