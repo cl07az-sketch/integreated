@@ -13,6 +13,7 @@ import subprocess
 import base64
 from openai import OpenAI
 
+# GPIO Config
 BuzzerPin = 11
 ButtonPin = 13
 VIBRATOR_PIN = 22
@@ -22,14 +23,18 @@ monitoring = True
 def setup():
     GPIO.setmode(GPIO.BOARD)
 
+    # Buzzer setup
     GPIO.setup(BuzzerPin, GPIO.OUT)
     GPIO.output(BuzzerPin, GPIO.HIGH)
 
+    # Button setup
     GPIO.setup(ButtonPin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
+    # Vibrator setup
     GPIO.setup(VIBRATOR_PIN, GPIO.OUT)
     GPIO.output(VIBRATOR_PIN, GPIO.HIGH)
 
+    # Interrupt Button Toggle
     GPIO.add_event_detect(ButtonPin, GPIO.FALLING, callback=toggle_monitoring, bouncetime=200)
 
 def toggle_monitoring(channel):
@@ -55,6 +60,7 @@ def vibrator_off():
 def cleanup():
     GPIO.cleanup()
 
+# Temp Sensor
 os.system('modprobe w1-gpio')
 os.system('modprobe w1-therm')
 
@@ -75,6 +81,7 @@ def read_temp():
     c = float(t)/1000.0
     return c, c*9/5+32
 
+# Camera and OpenAI
 client = OpenAI(api_key="sk-REPLACE_WITH_NEW_KEY")
 
 MODEL = "gpt-5-nano-2025-08-07"
@@ -103,9 +110,8 @@ def extract_text(resp):
 
 def analyze_for_water():
     prompt = (
-        "Carefully examine the image for signs of water. Look for reflections, shine, wet, shadows, darker patches, puddles, or glossy surfaces.\n"
-        ''' "Second: If ANY area looks wet, glossy, reflective, puddles, or darker due to moisture, respond YES. Otherwise respond NO.\n"
-        "Your final line must be only YES or NO."'''
+        "Describe the image in one or two sentences. Then on the last line output ONLY 'YES' if water "
+        "is visible, otherwise 'NO'."
     )
 
     resp = client.responses.create(
@@ -126,6 +132,8 @@ def analyze_for_water():
     description = "\n".join(lines[:-1]).strip()
     return yesno.startswith("Y"), description
 
+
+# Main Loop
 def main():
     global monitoring
     print("System started. Press button to toggle ON/OFF.")
@@ -145,6 +153,7 @@ def main():
             except:
                 temp_f = 72
 
+            # Camera
             if time.time() - last_camera_time >= camera_interval:
                 capture_image(IMAGE_PATH)
                 print("\nImage captured — analyzing...")
@@ -155,7 +164,8 @@ def main():
                 vibrator_on() if has_water else vibrator_off()
                 last_camera_time = time.time()
 
-            if temp_f < 76:
+            # Buzzer
+            if temp_f < 75:
                 if has_water:
                     buzzer_on()
                     buzzer_end_time = 0
@@ -183,4 +193,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nProgram interrupted. Cleaning up...")
         cleanup()
-
